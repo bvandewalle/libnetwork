@@ -8,8 +8,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/docker/docker/opts"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/libnetwork/netutils"
 )
 
 var (
@@ -114,6 +116,25 @@ func lookupContainerID(cli *NetworkCli, cnNameID string) (string, error) {
 	return "", fmt.Errorf("Cannot find container ID in json response")
 }
 
+func lookupSandboxID(cli *NetworkCli, containerID string) (string, error) {
+	obj, _, err := readBody(cli.call("GET", fmt.Sprintf("/sandboxes?partial-container-id=%s", containerID), nil, nil))
+	if err != nil {
+		return "", err
+	}
+
+	var sandboxList []SandboxResource
+	err = json.Unmarshal(obj, &sandboxList)
+	if err != nil {
+		return "", err
+	}
+
+	if len(sandboxList) == 0 {
+		return "", fmt.Errorf("cannot find sandbox for container: %s", containerID)
+	}
+
+	return sandboxList[0].ID, nil
+}
+
 // CmdService handles the service UI
 func (cli *NetworkCli) CmdService(chain string, args ...string) error {
 	cmd := cli.Subcmd(chain, "service", "COMMAND [OPTIONS] [arg...]", serviceUsage(chain), false)
@@ -142,6 +163,8 @@ func parseServiceName(name string) (string, string) {
 // CmdServicePublish handles service create UI
 func (cli *NetworkCli) CmdServicePublish(chain string, args ...string) error {
 	cmd := cli.Subcmd(chain, "publish", "SERVICE[.NETWORK]", "Publish a new service on a network", false)
+	flAlias := opts.NewListOpts(netutils.ValidateAlias)
+	cmd.Var(&flAlias, []string{"-alias"}, "Add alias to self")
 	cmd.Require(flag.Exact, 1)
 	err := cmd.ParseFlags(args, true)
 	if err != nil {
@@ -149,7 +172,7 @@ func (cli *NetworkCli) CmdServicePublish(chain string, args ...string) error {
 	}
 
 	sn, nn := parseServiceName(cmd.Arg(0))
-	sc := serviceCreate{Name: sn, Network: nn}
+	sc := serviceCreate{Name: sn, Network: nn, MyAliases: flAlias.GetAll()}
 	obj, _, err := readBody(cli.call("POST", "/services", sc, nil))
 	if err != nil {
 		return err
@@ -168,6 +191,7 @@ func (cli *NetworkCli) CmdServicePublish(chain string, args ...string) error {
 // CmdServiceUnpublish handles service delete UI
 func (cli *NetworkCli) CmdServiceUnpublish(chain string, args ...string) error {
 	cmd := cli.Subcmd(chain, "unpublish", "SERVICE[.NETWORK]", "Removes a service", false)
+	force := cmd.Bool([]string{"f", "-force"}, false, "force unpublish service")
 	cmd.Require(flag.Exact, 1)
 	err := cmd.ParseFlags(args, true)
 	if err != nil {
@@ -180,7 +204,8 @@ func (cli *NetworkCli) CmdServiceUnpublish(chain string, args ...string) error {
 		return err
 	}
 
-	_, _, err = readBody(cli.call("DELETE", "/services/"+serviceID, nil, nil))
+	sd := serviceDelete{Name: sn, Force: *force}
+	_, _, err = readBody(cli.call("DELETE", "/services/"+serviceID, sd, nil))
 
 	return err
 }
@@ -217,21 +242,22 @@ func (cli *NetworkCli) CmdServiceLs(chain string, args ...string) error {
 	wr := tabwriter.NewWriter(cli.out, 20, 1, 3, ' ', 0)
 	// unless quiet (-q) is specified, print field titles
 	if !*quiet {
-		fmt.Fprintln(wr, "SERVICE ID\tNAME\tNETWORK\tCONTAINER")
+		fmt.Fprintln(wr, "SERVICE ID\tNAME\tNETWORK\tCONTAINER\tSANDBOX")
 	}
 
 	for _, sr := range serviceResources {
 		ID := sr.ID
-		bkID, err := getBackendID(cli, ID)
+		bkID, sbID, err := getBackendID(cli, ID)
 		if err != nil {
 			return err
 		}
 		if !*noTrunc {
 			ID = stringid.TruncateID(ID)
 			bkID = stringid.TruncateID(bkID)
+			sbID = stringid.TruncateID(sbID)
 		}
 		if !*quiet {
-			fmt.Fprintf(wr, "%s\t%s\t%s\t%s\n", ID, sr.Name, sr.Network, bkID)
+			fmt.Fprintf(wr, "%s\t%s\t%s\t%s\t%s\n", ID, sr.Name, sr.Network, bkID, sbID)
 		} else {
 			fmt.Fprintln(wr, ID)
 		}
@@ -241,26 +267,26 @@ func (cli *NetworkCli) CmdServiceLs(chain string, args ...string) error {
 	return nil
 }
 
-func getBackendID(cli *NetworkCli, servID string) (string, error) {
+func getBackendID(cli *NetworkCli, servID string) (string, string, error) {
 	var (
 		obj []byte
 		err error
 		bk  string
+		sb  string
 	)
 
 	if obj, _, err = readBody(cli.call("GET", "/services/"+servID+"/backend", nil, nil)); err == nil {
-		var bkl []backendResource
-		if err := json.NewDecoder(bytes.NewReader(obj)).Decode(&bkl); err == nil {
-			if len(bkl) > 0 {
-				bk = bkl[0].ID
-			}
+		var sr SandboxResource
+		if err := json.NewDecoder(bytes.NewReader(obj)).Decode(&sr); err == nil {
+			bk = sr.ContainerID
+			sb = sr.ID
 		} else {
 			// Only print a message, don't make the caller cli fail for this
-			fmt.Fprintf(cli.out, "Failed to retrieve backend list for service %s (%v)", servID, err)
+			fmt.Fprintf(cli.out, "Failed to retrieve backend list for service %s (%v)\n", servID, err)
 		}
 	}
 
-	return bk, err
+	return bk, sb, err
 }
 
 // CmdServiceInfo handles service info UI
@@ -299,6 +325,8 @@ func (cli *NetworkCli) CmdServiceInfo(chain string, args ...string) error {
 // CmdServiceAttach handles service attach UI
 func (cli *NetworkCli) CmdServiceAttach(chain string, args ...string) error {
 	cmd := cli.Subcmd(chain, "attach", "CONTAINER SERVICE[.NETWORK]", "Sets a container as a service backend", false)
+	flAlias := opts.NewListOpts(netutils.ValidateAlias)
+	cmd.Var(&flAlias, []string{"-alias"}, "Add alias for another container")
 	cmd.Require(flag.Min, 2)
 	err := cmd.ParseFlags(args, true)
 	if err != nil {
@@ -310,13 +338,18 @@ func (cli *NetworkCli) CmdServiceAttach(chain string, args ...string) error {
 		return err
 	}
 
+	sandboxID, err := lookupSandboxID(cli, containerID)
+	if err != nil {
+		return err
+	}
+
 	sn, nn := parseServiceName(cmd.Arg(1))
 	serviceID, err := lookupServiceID(cli, nn, sn)
 	if err != nil {
 		return err
 	}
 
-	nc := serviceAttach{ContainerID: containerID}
+	nc := serviceAttach{SandboxID: sandboxID, Aliases: flAlias.GetAll()}
 
 	_, _, err = readBody(cli.call("POST", "/services/"+serviceID+"/backend", nc, nil))
 
@@ -338,12 +371,17 @@ func (cli *NetworkCli) CmdServiceDetach(chain string, args ...string) error {
 		return err
 	}
 
+	sandboxID, err := lookupSandboxID(cli, containerID)
+	if err != nil {
+		return err
+	}
+
 	serviceID, err := lookupServiceID(cli, nn, sn)
 	if err != nil {
 		return err
 	}
 
-	_, _, err = readBody(cli.call("DELETE", "/services/"+serviceID+"/backend/"+containerID, nil, nil))
+	_, _, err = readBody(cli.call("DELETE", "/services/"+serviceID+"/backend/"+sandboxID, nil, nil))
 	if err != nil {
 		return err
 	}

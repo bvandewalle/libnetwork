@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/docker/libnetwork/iptables"
-	"github.com/docker/libnetwork/netutils"
 	"github.com/docker/libnetwork/portmapper"
+	"github.com/docker/libnetwork/testutils"
 )
 
 const (
@@ -15,7 +15,7 @@ const (
 
 func TestProgramIPTable(t *testing.T) {
 	// Create a test bridge with a basic bridge configuration (name + IPv4).
-	defer netutils.SetupTestNetNS(t)()
+	defer testutils.SetupTestOSContext(t)()
 	createTestBridge(getBasicTestConfig(), &bridgeInterface{}, t)
 
 	// Store various iptables chain rules we care for.
@@ -39,7 +39,7 @@ func TestProgramIPTable(t *testing.T) {
 
 func TestSetupIPChains(t *testing.T) {
 	// Create a test bridge with a basic bridge configuration (name + IPv4).
-	defer netutils.SetupTestNetNS(t)()
+	defer testutils.SetupTestOSContext(t)()
 
 	driverconfig := &configuration{
 		EnableIPTables: true,
@@ -104,7 +104,7 @@ func assertIPTableChainProgramming(rule iptRule, descr string, t *testing.T) {
 func assertChainConfig(d *driver, t *testing.T) {
 	var err error
 
-	d.natChain, d.filterChain, err = setupIPChains(d.config)
+	d.natChain, d.filterChain, d.isolationChain, err = setupIPChains(d.config)
 	if err != nil {
 		t.Fatal(err)
 	}

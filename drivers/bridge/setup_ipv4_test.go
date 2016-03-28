@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/docker/libnetwork/netutils"
+	"github.com/docker/libnetwork/testutils"
 	"github.com/vishvananda/netlink"
 )
 
@@ -20,7 +20,7 @@ func setupTestInterface(t *testing.T) (*networkConfiguration, *bridgeInterface) 
 }
 
 func TestSetupBridgeIPv4Fixed(t *testing.T) {
-	defer netutils.SetupTestNetNS(t)()
+	defer testutils.SetupTestOSContext(t)()
 
 	ip, netw, err := net.ParseCIDR("192.168.1.1/24")
 	if err != nil {
@@ -51,34 +51,8 @@ func TestSetupBridgeIPv4Fixed(t *testing.T) {
 	}
 }
 
-func TestSetupBridgeIPv4Auto(t *testing.T) {
-	defer netutils.SetupTestNetNS(t)()
-
-	config, br := setupTestInterface(t)
-	if err := setupBridgeIPv4(config, br); err != nil {
-		t.Fatalf("Failed to setup bridge IPv4: %v", err)
-	}
-
-	addrsv4, err := netlink.AddrList(br.Link, netlink.FAMILY_V4)
-	if err != nil {
-		t.Fatalf("Failed to list device IPv4 addresses: %v", err)
-	}
-
-	var found bool
-	for _, addr := range addrsv4 {
-		if bridgeNetworks[0].String() == addr.IPNet.String() {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Fatalf("Bridge device does not have the automatic IPv4 address %v", bridgeNetworks[0].String())
-	}
-}
-
 func TestSetupGatewayIPv4(t *testing.T) {
-	defer netutils.SetupTestNetNS(t)()
+	defer testutils.SetupTestOSContext(t)()
 
 	ip, nw, _ := net.ParseCIDR("192.168.0.24/16")
 	nw.IP = ip
@@ -96,16 +70,5 @@ func TestSetupGatewayIPv4(t *testing.T) {
 
 	if !gw.Equal(br.gatewayIPv4) {
 		t.Fatalf("Set Default Gateway failed. Expected %v, Found %v", gw, br.gatewayIPv4)
-	}
-}
-
-func TestCheckPreallocatedBridgeNetworks(t *testing.T) {
-	// Just make sure the bridge networks are created the way we want (172.17.x.x/16)
-	for i := 0; i < len(bridgeNetworks); i++ {
-		fb := bridgeNetworks[i].IP[0]
-		ones, _ := bridgeNetworks[i].Mask.Size()
-		if ((fb == 172 || fb == 10) && ones != 16) || (fb == 192 && ones != 24) {
-			t.Fatalf("Wrong mask for preallocated bridge network: %s", bridgeNetworks[i].String())
-		}
 	}
 }

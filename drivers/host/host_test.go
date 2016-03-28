@@ -3,7 +3,7 @@ package host
 import (
 	"testing"
 
-	_ "github.com/docker/libnetwork/netutils"
+	_ "github.com/docker/libnetwork/testutils"
 	"github.com/docker/libnetwork/types"
 )
 
@@ -14,7 +14,7 @@ func TestDriver(t *testing.T) {
 		t.Fatalf("Unexpected network type returned by driver")
 	}
 
-	err := d.CreateNetwork("first", nil)
+	err := d.CreateNetwork("first", nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestDriver(t *testing.T) {
 		t.Fatalf("Unexpected network id stored")
 	}
 
-	err = d.CreateNetwork("second", nil)
+	err = d.CreateNetwork("second", nil, nil, nil)
 	if err == nil {
 		t.Fatalf("Second network creation should fail on this driver")
 	}

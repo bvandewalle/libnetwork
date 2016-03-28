@@ -62,6 +62,11 @@ func (pm *PortMapper) SetIptablesChain(c *iptables.ChainInfo, bridgeName string)
 
 // Map maps the specified container transport address to the host's network address and transport port
 func (pm *PortMapper) Map(container net.Addr, hostIP net.IP, hostPort int, useProxy bool) (host net.Addr, err error) {
+	return pm.MapRange(container, hostIP, hostPort, hostPort, useProxy)
+}
+
+// MapRange maps the specified container transport address to the host's network address and transport port range
+func (pm *PortMapper) MapRange(container net.Addr, hostIP net.IP, hostPortStart, hostPortEnd int, useProxy bool) (host net.Addr, err error) {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 
@@ -74,7 +79,7 @@ func (pm *PortMapper) Map(container net.Addr, hostIP net.IP, hostPort int, usePr
 	switch container.(type) {
 	case *net.TCPAddr:
 		proto = "tcp"
-		if allocatedHostPort, err = pm.Allocator.RequestPort(hostIP, proto, hostPort); err != nil {
+		if allocatedHostPort, err = pm.Allocator.RequestPortInRange(hostIP, proto, hostPortStart, hostPortEnd); err != nil {
 			return nil, err
 		}
 
@@ -91,7 +96,7 @@ func (pm *PortMapper) Map(container net.Addr, hostIP net.IP, hostPort int, usePr
 		}
 	case *net.UDPAddr:
 		proto = "udp"
-		if allocatedHostPort, err = pm.Allocator.RequestPort(hostIP, proto, hostPort); err != nil {
+		if allocatedHostPort, err = pm.Allocator.RequestPortInRange(hostIP, proto, hostPortStart, hostPortEnd); err != nil {
 			return nil, err
 		}
 
@@ -183,6 +188,8 @@ func (pm *PortMapper) Unmap(host net.Addr) error {
 
 //ReMapAll will re-apply all port mappings
 func (pm *PortMapper) ReMapAll() {
+	pm.lock.Lock()
+	defer pm.lock.Unlock()
 	logrus.Debugln("Re-applying all port mappings.")
 	for _, data := range pm.currentMappings {
 		containerIP, containerPort := getIPAndPort(data.container)

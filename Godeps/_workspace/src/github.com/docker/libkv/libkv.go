@@ -1,12 +1,11 @@
 package libkv
 
 import (
-	log "github.com/Sirupsen/logrus"
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/docker/libkv/store"
-	"github.com/docker/libkv/store/consul"
-	"github.com/docker/libkv/store/etcd"
-	"github.com/docker/libkv/store/mock"
-	"github.com/docker/libkv/store/zookeeper"
 )
 
 // Initialize creates a new Store object, initializing the client
@@ -14,20 +13,28 @@ type Initialize func(addrs []string, options *store.Config) (store.Store, error)
 
 var (
 	// Backend initializers
-	initializers = map[store.Backend]Initialize{
-		store.MOCK:   mock.InitializeMock,
-		store.CONSUL: consul.InitializeConsul,
-		store.ETCD:   etcd.InitializeEtcd,
-		store.ZK:     zookeeper.InitializeZookeeper,
-	}
+	initializers = make(map[store.Backend]Initialize)
+
+	supportedBackend = func() string {
+		keys := make([]string, 0, len(initializers))
+		for k := range initializers {
+			keys = append(keys, string(k))
+		}
+		sort.Strings(keys)
+		return strings.Join(keys, ", ")
+	}()
 )
 
 // NewStore creates a an instance of store
 func NewStore(backend store.Backend, addrs []string, options *store.Config) (store.Store, error) {
 	if init, exists := initializers[backend]; exists {
-		log.WithFields(log.Fields{"backend": backend}).Debug("Initializing store service")
 		return init(addrs, options)
 	}
 
-	return nil, store.ErrNotSupported
+	return nil, fmt.Errorf("%s %s", store.ErrBackendNotSupported.Error(), supportedBackend)
+}
+
+// AddStore adds a new store backend to libkv
+func AddStore(store store.Backend, init Initialize) {
+	initializers[store] = init
 }

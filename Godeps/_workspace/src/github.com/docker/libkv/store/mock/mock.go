@@ -16,8 +16,8 @@ type Mock struct {
 	Options *store.Config
 }
 
-// InitializeMock creates a Mock store.
-func InitializeMock(endpoints []string, options *store.Config) (store.Store, error) {
+// New creates a Mock store
+func New(endpoints []string, options *store.Config) (store.Store, error) {
 	s := &Mock{}
 	s.Endpoints = endpoints
 	s.Options = options
@@ -96,8 +96,8 @@ type Lock struct {
 }
 
 // Lock mock
-func (l *Lock) Lock() (<-chan struct{}, error) {
-	args := l.Mock.Called()
+func (l *Lock) Lock(stopCh chan struct{}) (<-chan struct{}, error) {
+	args := l.Mock.Called(stopCh)
 	return args.Get(0).(<-chan struct{}), args.Error(1)
 }
 
